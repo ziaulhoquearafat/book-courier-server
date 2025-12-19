@@ -103,10 +103,48 @@ async function run() {
     // BOOK ROUTES
     // ============================================
 
+    // Get All Published Books (Public) - with search & sort
+    app.get("/books", async (req, res) => {
+      const { search, sort } = req.query;
+      let query = { status: "published" };
+
+      if (search) {
+        query.title = { $regex: search, $options: "i" };
+      }
+
+      let sortOption = {};
+      if (sort === "price_asc") sortOption = { price: 1 };
+      if (sort === "price_desc") sortOption = { price: -1 };
+      if (sort === "newest") sortOption = { createdAt: -1 };
+
+      const books = await booksCollections
+        .find(query)
+        .sort(sortOption)
+        .toArray();
+      res.send(books);
+    });
+
+    // Get Latest Books (for homepage)
+    app.get("/books/latest", async (req, res) => {
+      const books = await booksCollection
+        .find({ status: "published" })
+        .sort({ createdAt: -1 })
+        .limit(6)
+        .toArray();
+      res.send(books);
+    });
+
+    // Get Single Book Details
+    app.get("/books/:id", async (req, res) => {
+      const id = req.params.id;
+      const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+      res.send(book);
+    });
+
     // Add Book (Librarian Only)
     app.post("/books", async (req, res) => {
       const book = req.body;
-      const result = await booksCollection.insertOne({
+      const result = await booksCollections.insertOne({
         ...book,
         addedBy: req.tokenEmail,
         createdAt: new Date(),
