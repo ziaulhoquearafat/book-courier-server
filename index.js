@@ -75,7 +75,7 @@ async function run() {
       res.send(result);
     });
 
-    // // Get User Role
+    // Get User Role
     // app.get("/users/:email/role", async (req, res) => {
     //   const email = req.params.email;
     //   if (email !== req.tokenEmail) {
@@ -137,7 +137,7 @@ async function run() {
     // Get Single Book Details
     app.get("/books/:id", async (req, res) => {
       const id = req.params.id;
-      const book = await booksCollection.findOne({ _id: new ObjectId(id) });
+      const book = await booksCollections.findOne({ _id: new ObjectId(id) });
       res.send(book);
     });
 
@@ -149,6 +149,31 @@ async function run() {
         addedBy: req.tokenEmail,
         createdAt: new Date(),
         ratings: [],
+      });
+      res.send(result);
+    });
+
+    // ============================================
+    // ORDER ROUTES
+    // ============================================
+
+    // Place Order
+    app.post("/orders", verifyJWT, async (req, res) => {
+      const order = req.body;
+      const book = await booksCollection.findOne({
+        _id: new ObjectId(order.bookId),
+      });
+
+      const result = await ordersCollection.insertOne({
+        ...order,
+        userEmail: req.tokenEmail,
+        librarianEmail: book.addedBy,
+        bookTitle: book.title,
+        bookImage: book.image,
+        price: book.price,
+        orderStatus: "pending",
+        paymentStatus: "unpaid",
+        orderDate: new Date(),
       });
       res.send(result);
     });
