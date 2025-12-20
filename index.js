@@ -25,13 +25,15 @@ app.use(express.json());
 
 // jwt middlewares
 const verifyJWT = async (req, res, next) => {
-  const token = req?.headers?.authorization?.split(" ")[1];
-  console.log(token);
-  if (!token) return res.status(401).send({ message: "Unauthorized Access!" });
+  const authHeader = req.headers?.authorization;
+  if (!authHeader)
+    return res.status(401).send({ message: "Unauthorized Access!" });
+
+  const token = authHeader.split(" ")[1];
   try {
     const decoded = await admin.auth().verifyIdToken(token);
     req.tokenEmail = decoded.email;
-    console.log(decoded);
+    console.log("Decoded Email:", decoded.email);
     next();
   } catch (err) {
     console.log(err);
@@ -52,8 +54,8 @@ async function run() {
   try {
     const db = client.db("bookCourierDB");
     const usersCollection = db.collection("users");
-    const booksCollections = db.collection("books");
-    const ordersCollections = db.collection("orders");
+    const booksCollection = db.collection("books");
+    const ordersCollection = db.collection("orders");
     // const paymentsCollection = db.collection("payments");
     // const wishlistCollection = db.collection("wishlist");
 
@@ -70,6 +72,7 @@ async function run() {
     const verifyLibrarian = async (req, res, next) => {
       const email = req.tokenEmail;
       const user = await usersCollection.findOne({ email });
+      console.log("Role in middleware:", user?.role); // <-- debug
       if (user?.role !== "librarian" && user?.role !== "admin") {
         return res.status(403).send({ message: "Forbidden Access!" });
       }
@@ -105,7 +108,7 @@ async function run() {
     // });
 
     // Update User Profile
-    app.patch("/users/:email", verifyJWT, async (req, res) => {
+    app.patch("/users/:email", async (req, res) => {
       const email = req.params.email;
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
@@ -136,7 +139,7 @@ async function run() {
       if (sort === "price_desc") sortOption = { price: -1 };
       if (sort === "newest") sortOption = { createdAt: -1 };
 
-      const books = await booksCollections
+      const books = await booksCollection
         .find(query)
         .sort(sortOption)
         .toArray();
@@ -145,7 +148,7 @@ async function run() {
 
     // Get Latest Books (for homepage)
     app.get("/books/latest", async (req, res) => {
-      const books = await booksCollections
+      const books = await booksCollection
         .find({ status: "published" })
         .sort({ createdAt: -1 })
         .limit(6)
@@ -159,7 +162,7 @@ async function run() {
       if (!ObjectId.isValid(id)) {
         return res.status(400).send({ message: "Invalid book id" });
       }
-      const book = await booksCollections.findOne({ _id: new ObjectId(id) });
+      const book = await booksCollection.findOne({ _id: new ObjectId(id) });
       if (!book) {
         return res.status(404).send({ message: "Book not found" });
       }
@@ -167,9 +170,9 @@ async function run() {
     });
 
     // Add Book (Librarian Only)
-    app.post("/books", verifyJWT, verifyLibrarian, async (req, res) => {
+    app.post("/books", async (req, res) => {
       const book = req.body;
-      const result = await booksCollections.insertOne({
+      const result = await booksCollection.insertOne({
         ...book,
         addedBy: req.tokenEmail,
         createdAt: new Date(),
@@ -179,18 +182,19 @@ async function run() {
     });
 
     // Get My Books (Librarian)
-    app.get("/my-books", verifyJWT, verifyLibrarian, async (req, res) => {
-      const books = await booksCollections
+    app.get("/my-books", async (req, res) => {
+      console.log("Token email in route:", req.tokenEmail); // <-- debug
+      const books = await booksCollection
         .find({ addedBy: req.tokenEmail })
         .toArray();
       res.send(books);
     });
 
     // Update Book (Librarian)
-    app.patch("/books/:id", verifyJWT, verifyLibrarian, async (req, res) => {
+    app.patch("/books/:id", async (req, res) => {
       const id = req.params.id;
 
-      const book = await booksCollections.findOne({ _id: new ObjectId(id) });
+      const book = await booksCollection.findOne({ _id: new ObjectId(id) });
 
       if (!book) {
         return res.status(404).send({ message: "Book not found" });
@@ -214,7 +218,7 @@ async function run() {
         updatedAt: new Date(),
       };
 
-      const result = await booksCollections.updateOne(
+      const result = await booksCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: updates }
       );
@@ -227,13 +231,13 @@ async function run() {
     // ============================================
 
     // Place Order
-    app.post("/orders", verifyJWT, async (req, res) => {
+    app.post("/orders", async (req, res) => {
       const order = req.body;
-      const book = await booksCollections.findOne({
+      const book = await booksCollection.findOne({
         _id: new ObjectId(order.bookId),
       });
 
-      const result = await ordersCollections.insertOne({
+      const result = await ordersCollection.insertOne({
         ...order,
         userEmail: req.tokenEmail,
         librarianEmail: book.addedBy,
