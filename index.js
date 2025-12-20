@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const { MongoClient, ServerApiVersion } = require("mongodb");
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
 const port = process.env.PORT || 3000;
 const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
@@ -54,8 +54,27 @@ async function run() {
     const usersCollection = db.collection("users");
     const booksCollections = db.collection("books");
     const ordersCollections = db.collection("orders");
-    const paymentsCollection = db.collection("payments");
-    const wishlistCollection = db.collection("wishlist");
+    // const paymentsCollection = db.collection("payments");
+    // const wishlistCollection = db.collection("wishlist");
+
+    // Role-based Middleware
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.tokenEmail;
+      const user = await usersCollection.findOne({ email });
+      if (user?.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden Access!" });
+      }
+      next();
+    };
+
+    const verifyLibrarian = async (req, res, next) => {
+      const email = req.tokenEmail;
+      const user = await usersCollection.findOne({ email });
+      if (user?.role !== "librarian" && user?.role !== "admin") {
+        return res.status(403).send({ message: "Forbidden Access!" });
+      }
+      next();
+    };
 
     // Create/Update User on Registration/Login
     app.post("/users", async (req, res) => {
@@ -86,7 +105,7 @@ async function run() {
     // });
 
     // Update User Profile
-    app.patch("/users/:email", async (req, res) => {
+    app.patch("/users/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
@@ -126,7 +145,7 @@ async function run() {
 
     // Get Latest Books (for homepage)
     app.get("/books/latest", async (req, res) => {
-      const books = await booksCollection
+      const books = await booksCollections
         .find({ status: "published" })
         .sort({ createdAt: -1 })
         .limit(6)
@@ -136,13 +155,19 @@ async function run() {
 
     // Get Single Book Details
     app.get("/books/:id", async (req, res) => {
-      const id = req.params.id;
+      const { id } = req.params;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id" });
+      }
       const book = await booksCollections.findOne({ _id: new ObjectId(id) });
+      if (!book) {
+        return res.status(404).send({ message: "Book not found" });
+      }
       res.send(book);
     });
 
     // Add Book (Librarian Only)
-    app.post("/books", async (req, res) => {
+    app.post("/books", verifyJWT, verifyLibrarian, async (req, res) => {
       const book = req.body;
       const result = await booksCollections.insertOne({
         ...book,
@@ -153,6 +178,50 @@ async function run() {
       res.send(result);
     });
 
+    // Get My Books (Librarian)
+    app.get("/my-books", verifyJWT, verifyLibrarian, async (req, res) => {
+      const books = await booksCollections
+        .find({ addedBy: req.tokenEmail })
+        .toArray();
+      res.send(books);
+    });
+
+    // Update Book (Librarian)
+    app.patch("/books/:id", verifyJWT, verifyLibrarian, async (req, res) => {
+      const id = req.params.id;
+
+      const book = await booksCollections.findOne({ _id: new ObjectId(id) });
+
+      if (!book) {
+        return res.status(404).send({ message: "Book not found" });
+      }
+
+      if (book.addedBy !== req.tokenEmail) {
+        return res
+          .status(403)
+          .send({ message: "You can only edit your own books!" });
+      }
+
+      const { title, author, price, description, image, status } = req.body;
+
+      const updates = {
+        ...(title && { title }),
+        ...(author && { author }),
+        ...(price && { price }),
+        ...(description && { description }),
+        ...(image && { image }),
+        ...(status && { status }),
+        updatedAt: new Date(),
+      };
+
+      const result = await booksCollections.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updates }
+      );
+
+      res.send(result);
+    });
+
     // ============================================
     // ORDER ROUTES
     // ============================================
@@ -160,11 +229,11 @@ async function run() {
     // Place Order
     app.post("/orders", verifyJWT, async (req, res) => {
       const order = req.body;
-      const book = await booksCollection.findOne({
+      const book = await booksCollections.findOne({
         _id: new ObjectId(order.bookId),
       });
 
-      const result = await ordersCollection.insertOne({
+      const result = await ordersCollections.insertOne({
         ...order,
         userEmail: req.tokenEmail,
         librarianEmail: book.addedBy,
