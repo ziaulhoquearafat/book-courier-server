@@ -3,11 +3,12 @@ const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const admin = require("firebase-admin");
+const serviceAccount = require("./serviceAccountKey.json");
 const port = process.env.PORT || 3000;
-const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
-  "utf-8"
-);
-const serviceAccount = JSON.parse(decoded);
+// const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
+//   "utf-8"
+// );
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -25,19 +26,20 @@ app.use(express.json());
 
 // jwt middlewares
 const verifyJWT = async (req, res, next) => {
-  const authHeader = req.headers?.authorization;
-  if (!authHeader)
-    return res.status(401).send({ message: "Unauthorized Access!" });
-
-  const token = authHeader.split(" ")[1];
   try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) {
+      return res.status(401).send({ message: "Unauthorized" });
+    }
+
+    const token = authHeader.split(" ")[1];
     const decoded = await admin.auth().verifyIdToken(token);
+
     req.tokenEmail = decoded.email;
-    console.log("Decoded Email:", decoded.email);
     next();
-  } catch (err) {
-    console.log(err);
-    return res.status(401).send({ message: "Unauthorized Access!", err });
+  } catch (error) {
+    console.error("JWT Error:", error.message);
+    res.status(401).send({ message: "Invalid token" });
   }
 };
 
@@ -170,7 +172,7 @@ async function run() {
     });
 
     // Add Book (Librarian Only)
-    app.post("/books", async (req, res) => {
+    app.post("/books", verifyJWT, async (req, res) => {
       const book = req.body;
       const result = await booksCollection.insertOne({
         ...book,
@@ -182,7 +184,7 @@ async function run() {
     });
 
     // Get My Books (Librarian)
-    app.get("/my-books", async (req, res) => {
+    app.get("/my-books", verifyJWT, async (req, res) => {
       console.log("Token email in route:", req.tokenEmail); // <-- debug
       const books = await booksCollection
         .find({ addedBy: req.tokenEmail })
@@ -191,7 +193,7 @@ async function run() {
     });
 
     // Update Book (Librarian)
-    app.patch("/books/:id", async (req, res) => {
+    app.patch("/books/:id", verifyJWT, async (req, res) => {
       const id = req.params.id;
 
       const book = await booksCollection.findOne({ _id: new ObjectId(id) });
@@ -231,7 +233,7 @@ async function run() {
     // ============================================
 
     // Place Order
-    app.post("/orders", async (req, res) => {
+    app.post("/orders", verifyJWT, async (req, res) => {
       const order = req.body;
       const book = await booksCollection.findOne({
         _id: new ObjectId(order.bookId),
@@ -248,6 +250,63 @@ async function run() {
         paymentStatus: "unpaid",
         orderDate: new Date(),
       });
+      res.send(result);
+    });
+
+    // Get My Orders (User)
+    app.get("/my-orders", verifyJWT, async (req, res) => {
+      const orders = await ordersCollection
+        .find({ userEmail: req.tokenEmail })
+        .sort({ orderDate: -1 })
+        .toArray();
+      res.send(orders);
+    });
+
+    // Cancel Order (User)
+    app.patch("/orders/:id/cancel", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+      const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+
+      if (order.userEmail !== req.tokenEmail) {
+        return res.status(403).send({ message: "Forbidden!" });
+      }
+
+      if (order.orderStatus !== "pending") {
+        return res.status(400).send({ message: "Cannot cancel this order!" });
+      }
+
+      const result = await ordersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { orderStatus: "cancelled" } }
+      );
+      res.send(result);
+    });
+
+    // Get Librarian Orders
+    app.get("/librarian-orders", verifyJWT, async (req, res) => {
+      const orders = await ordersCollection
+        .find({ librarianEmail: req.tokenEmail })
+        .sort({ orderDate: -1 })
+        .toArray();
+      res.send(orders);
+    });
+
+    // Update Order Status (Librarian)
+    app.patch("/orders/:id/status", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+      const { orderStatus } = req.body;
+      const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
+
+      if (order.librarianEmail !== req.tokenEmail) {
+        return res
+          .status(403)
+          .send({ message: "You can only manage your own book orders!" });
+      }
+
+      const result = await ordersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { orderStatus } }
+      );
       res.send(result);
     });
 
