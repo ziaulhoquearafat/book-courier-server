@@ -81,6 +81,10 @@ async function run() {
       next();
     };
 
+    // ============================================
+    // AUTH ROUTES
+    // ============================================
+
     // Create/Update User on Registration/Login
     app.post("/users", async (req, res) => {
       const user = req.body;
@@ -100,14 +104,14 @@ async function run() {
     });
 
     // Get User Role
-    // app.get("/users/:email/role", async (req, res) => {
-    //   const email = req.params.email;
-    //   if (email !== req.tokenEmail) {
-    //     return res.status(403).send({ message: "Forbidden Access!" });
-    //   }
-    //   const user = await usersCollection.findOne({ email });
-    //   res.send({ role: user?.role || "user" });
-    // });
+    app.get("/users/:email/role", async (req, res) => {
+      const email = req.params.email;
+      if (email !== req.tokenEmail) {
+        return res.status(403).send({ message: "Forbidden Access!" });
+      }
+      const user = await usersCollection.findOne({ email });
+      res.send({ role: user?.role || "user" });
+    });
 
     // Update User Profile
     app.patch("/users/:email", async (req, res) => {
@@ -228,6 +232,45 @@ async function run() {
       res.send(result);
     });
 
+    // Get All Books (Admin - including unpublished)
+    app.get("/all-books", verifyJWT, verifyAdmin, async (req, res) => {
+      const books = await booksCollection.find().toArray();
+      res.send(books);
+    });
+
+    // Publish / Unpublish Book (Admin)
+    app.patch("/books/:id/status", verifyJWT, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      const { isPublished } = req.body;
+
+      // ✅ Validation (must be boolean)
+      if (typeof isPublished !== "boolean") {
+        return res.status(400).send({ message: "Invalid status value" });
+      }
+
+      const result = await booksCollection.updateOne(
+        { _id: new ObjectId(id) },
+        {
+          $set: {
+            isPublished: isPublished,
+            updatedAt: new Date(),
+          },
+        }
+      );
+
+      res.send(result);
+    });
+
+    // Delete Book (Admin)
+    app.delete("/books/:id", verifyJWT, verifyAdmin, async (req, res) => {
+      const id = req.params.id;
+      // Delete book
+      const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
+      // Delete all orders for this book
+      await ordersCollection.deleteMany({ bookId: new ObjectId(id) });
+      res.send(result);
+    });
+
     // ============================================
     // ORDER ROUTES
     // ============================================
@@ -306,6 +349,27 @@ async function run() {
       const result = await ordersCollection.updateOne(
         { _id: new ObjectId(id) },
         { $set: { orderStatus } }
+      );
+      res.send(result);
+    });
+
+    // ============================================
+    // ADMIN ROUTES
+    // ============================================
+
+    // Get All Users
+    app.get("/users", verifyJWT, async (req, res) => {
+      const users = await usersCollection.find().toArray();
+      res.send(users);
+    });
+
+    // Update User Role (Make Librarian/Admin)
+    app.patch("/users/:id/role", verifyJWT, async (req, res) => {
+      const id = req.params.id;
+      const { role } = req.body;
+      const result = await usersCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { role } }
       );
       res.send(result);
     });
