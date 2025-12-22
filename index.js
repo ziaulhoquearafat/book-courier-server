@@ -354,6 +354,97 @@ async function run() {
       res.send(result);
     });
 
+    // Get Librarian Orders
+    app.get(
+      "/librarian-orders",
+      verifyJWT,
+      verifyLibrarian,
+      async (req, res) => {
+        try {
+          const orders = await ordersCollection
+            .find({ librarianEmail: req.tokenEmail })
+            .sort({ orderDate: -1 })
+            .toArray();
+
+          res.send(orders);
+        } catch (error) {
+          console.error("Get librarian orders error:", error);
+          res.status(500).send({ message: "Failed to get orders" });
+        }
+      }
+    );
+
+    // Update Order Status (Librarian)
+    app.patch(
+      "/orders/:id/status",
+      verifyJWT,
+      verifyLibrarian,
+      async (req, res) => {
+        try {
+          const id = req.params.id;
+          const { orderStatus } = req.body;
+
+          // 1️⃣ Allowed status list
+          const allowedStatus = [
+            "pending",
+            "shipped",
+            "delivered",
+            "cancelled",
+          ];
+
+          if (!allowedStatus.includes(orderStatus)) {
+            return res.status(400).send({ message: "Invalid order status" });
+          }
+
+          // 2️⃣ Find order
+          const order = await ordersCollection.findOne({
+            _id: new ObjectId(id),
+          });
+
+          if (!order) {
+            return res.status(404).send({ message: "Order not found" });
+          }
+
+          // 3️⃣ Own order check
+          if (order.librarianEmail !== req.tokenEmail) {
+            return res.status(403).send({
+              message: "You can only manage your own book orders!",
+            });
+          }
+
+          // 4️⃣ Status flow validation
+          const statusFlow = {
+            pending: ["shipped", "cancelled"],
+            shipped: ["delivered"],
+            delivered: [],
+            cancelled: [],
+          };
+
+          if (!statusFlow[order.orderStatus].includes(orderStatus)) {
+            return res.status(400).send({
+              message: `Cannot change status from ${order.orderStatus} to ${orderStatus}`,
+            });
+          }
+
+          // 5️⃣ Update status
+          const result = await ordersCollection.updateOne(
+            { _id: new ObjectId(id) },
+            {
+              $set: {
+                orderStatus,
+                updatedAt: new Date(),
+              },
+            }
+          );
+
+          res.send(result);
+        } catch (error) {
+          console.error("Update order status error:", error);
+          res.status(500).send({ message: "Failed to update order status" });
+        }
+      }
+    );
+
     // ==========================================
     // PAYMENT ROUTES
     // ==========================================
