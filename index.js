@@ -129,20 +129,17 @@ async function run() {
     // BOOK ROUTES
     // ============================================
 
-    // Get All Published Books (Public) - with search & sort
+    // Get All Published Books (Public) - with search, sort & pagination
     app.get("/books", async (req, res) => {
       const { search, sort } = req.query;
       let query = { status: "published" };
-
       if (search) {
         query.title = { $regex: search, $options: "i" };
       }
-
       let sortOption = {};
       if (sort === "price_asc") sortOption = { price: 1 };
       if (sort === "price_desc") sortOption = { price: -1 };
       if (sort === "newest") sortOption = { createdAt: -1 };
-
       const books = await booksCollection
         .find(query)
         .sort(sortOption)
