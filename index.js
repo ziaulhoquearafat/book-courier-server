@@ -4,8 +4,23 @@ const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
-const serviceAccount = require("./serviceAccountKey.json");
 const port = process.env.PORT || 3000;
+
+// Firebase Admin Setup
+let serviceAccount;
+
+if (process.env.FIREBASE_PRIVATE_KEY) {
+  // Production (Vercel) - environment variables থেকে নিবে
+  serviceAccount = {
+    type: "service_account",
+    project_id: process.env.FIREBASE_PROJECT_ID,
+    private_key: process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    client_email: process.env.FIREBASE_CLIENT_EMAIL,
+  };
+} else {
+  // Development (Local) - file থেকে নিবে
+  serviceAccount = require("./serviceAccountKey.json");
+}
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -52,6 +67,9 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 
 async function run() {
   try {
+    await client.connect();
+    console.log("✅ Connected to MongoDB!");
+
     const db = client.db("bookCourierDB");
     const usersCollection = db.collection("users");
     const booksCollection = db.collection("books");
@@ -614,11 +632,9 @@ async function run() {
         });
 
         if (!order) {
-          return res
-            .status(403)
-            .send({
-              message: "You can only review books you ordered and delivered!",
-            });
+          return res.status(403).send({
+            message: "You can only review books you ordered and delivered!",
+          });
         }
 
         // Prevent duplicate review
