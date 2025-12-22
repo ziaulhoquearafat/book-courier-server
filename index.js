@@ -558,6 +558,90 @@ async function run() {
       res.send(result);
     });
 
+    // ============================================
+    // REVIEW ROUTES
+    // ============================================
+
+    // Add Review & Rating (User must have delivered order)
+    app.post("/books/:id/review", verifyJWT, async (req, res) => {
+      try {
+        const bookId = req.params.id;
+        const { rating, review } = req.body;
+
+        if (!rating || rating < 1 || rating > 5) {
+          return res
+            .status(400)
+            .send({ message: "Rating must be between 1 and 5" });
+        }
+
+        // 1️⃣ Check if user ordered & delivered this book
+        const order = await ordersCollection.findOne({
+          bookId: new ObjectId(bookId),
+          userEmail: req.tokenEmail,
+          orderStatus: "delivered",
+        });
+
+        if (!order) {
+          return res
+            .status(403)
+            .send({ message: "You can only review books you ordered!" });
+        }
+
+        // 2️⃣ Prevent duplicate review (1 user = 1 review)
+        const alreadyReviewed = await booksCollection.findOne({
+          _id: new ObjectId(bookId),
+          "ratings.userEmail": req.tokenEmail,
+        });
+
+        if (alreadyReviewed) {
+          return res
+            .status(400)
+            .send({ message: "You already reviewed this book" });
+        }
+
+        // 3️⃣ Push review
+        const result = await booksCollection.updateOne(
+          { _id: new ObjectId(bookId) },
+          {
+            $push: {
+              ratings: {
+                userEmail: req.tokenEmail,
+                rating,
+                review,
+                date: new Date(),
+              },
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error("Add review error:", error);
+        res.status(500).send({ message: "Failed to add review" });
+      }
+    });
+
+    // Get Reviews of a Book
+    app.get("/books/:id/reviews", async (req, res) => {
+      try {
+        const bookId = req.params.id;
+
+        const book = await booksCollection.findOne(
+          { _id: new ObjectId(bookId) },
+          { projection: { ratings: 1 } }
+        );
+
+        if (!book) {
+          return res.status(404).send({ message: "Book not found" });
+        }
+
+        res.send(book.ratings || []);
+      } catch (error) {
+        console.error("Get reviews error:", error);
+        res.status(500).send({ message: "Failed to get reviews" });
+      }
+    });
+
     // Send a ping to confirm a successful connection
     await client.db("admin").command({ ping: 1 });
     console.log(
