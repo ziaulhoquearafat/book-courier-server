@@ -152,7 +152,7 @@ async function run() {
       const books = await booksCollection
         .find({ status: "published" })
         .sort({ createdAt: -1 })
-        .limit(6)
+        .limit(8)
         .toArray();
       res.send(books);
     });
