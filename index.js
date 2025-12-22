@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 const serviceAccount = require("./serviceAccountKey.json");
 const port = process.env.PORT || 3000;
@@ -17,7 +18,7 @@ const app = express();
 // middleware
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: [process.env.CLIENT_DOMAIN],
     credentials: true,
     optionSuccessStatus: 200,
   })
@@ -58,7 +59,7 @@ async function run() {
     const usersCollection = db.collection("users");
     const booksCollection = db.collection("books");
     const ordersCollection = db.collection("orders");
-    // const paymentsCollection = db.collection("payments");
+    const paymentsCollection = db.collection("payments");
     // const wishlistCollection = db.collection("wishlist");
 
     // Role-based Middleware
@@ -351,6 +352,109 @@ async function run() {
         { $set: { orderStatus } }
       );
       res.send(result);
+    });
+
+    // ==========================================
+    // PAYMENT ROUTES
+    // ==========================================
+    app.post("/create-checkout-session", async (req, res) => {
+      const order = req.body;
+
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ["card"],
+
+        line_items: [
+          {
+            price_data: {
+              currency: "usd",
+              product_data: {
+                name: order.bookTitle,
+                images: [order.bookImage],
+              },
+              unit_amount: order.price * 100,
+            },
+            quantity: 1,
+          },
+        ],
+
+        mode: "payment",
+
+        metadata: {
+          orderId: order._id.toString(), // 🔥 FIXED
+        },
+
+        customer_email: order.userEmail,
+
+        success_url: `${process.env.CLIENT_DOMAIN}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${process.env.CLIENT_DOMAIN}/dashboard/my-orders`,
+      });
+
+      res.send({ url: session.url });
+    });
+
+    app.post("/verify-payment", async (req, res) => {
+      try {
+        const { sessionId } = req.body;
+
+        // 1️⃣ Stripe session retrieve
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        console.log(session);
+
+        if (session.payment_status !== "paid") {
+          return res.status(400).send({ message: "Payment not completed" });
+        }
+
+        const orderId = session.metadata.orderId;
+        const transactionId = session.payment_intent;
+
+        // 2️⃣ 🔥 DUPLICATE PAYMENT CHECK
+        const existingPayment = await paymentsCollection.findOne({
+          transactionId,
+        });
+
+        if (existingPayment) {
+          return res.send({
+            message: "Payment already verified",
+            transactionId,
+          });
+        }
+
+        // 3️⃣ Save payment info
+        const paymentDoc = {
+          orderId,
+          transactionId,
+          amount: session.amount_total / 100,
+          currency: session.currency,
+          customerEmail:
+            session.customer_details?.email || session.customer_email,
+          paymentMethod: session.payment_method_types[0],
+          paymentStatus: "paid",
+          createdAt: new Date(),
+        };
+
+        await paymentsCollection.insertOne(paymentDoc);
+
+        // 4️⃣ Update order
+        await ordersCollection.updateOne(
+          { _id: new ObjectId(orderId) },
+          {
+            $set: {
+              paymentStatus: "paid",
+              orderStatus: "completed",
+              transactionId,
+              paidAt: new Date(),
+            },
+          }
+        );
+
+        res.send({
+          success: true,
+          transactionId,
+        });
+      } catch (error) {
+        console.error("Payment verify error:", error);
+        res.status(500).send({ message: "Payment verification failed" });
+      }
     });
 
     // ============================================
