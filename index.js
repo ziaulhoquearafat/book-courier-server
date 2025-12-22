@@ -576,7 +576,7 @@ async function run() {
 
         // 1️⃣ Check if user ordered & delivered this book
         const order = await ordersCollection.findOne({
-          bookId: new ObjectId(bookId),
+          bookId: bookId,
           userEmail: req.tokenEmail,
           orderStatus: "delivered",
         });
