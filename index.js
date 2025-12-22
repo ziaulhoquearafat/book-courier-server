@@ -57,7 +57,7 @@ async function run() {
     const booksCollection = db.collection("books");
     const ordersCollection = db.collection("orders");
     const paymentsCollection = db.collection("payments");
-    // const wishlistCollection = db.collection("wishlist");
+    const wishlistCollection = db.collection("wishlist");
 
     // Role-based Middleware
     const verifyAdmin = async (req, res, next) => {
@@ -639,6 +639,75 @@ async function run() {
       } catch (error) {
         console.error("Get reviews error:", error);
         res.status(500).send({ message: "Failed to get reviews" });
+      }
+    });
+
+    // ============================================
+    // WISHLIST ROUTES
+    // ============================================
+
+    // Add to Wishlist
+    app.post("/wishlist", verifyJWT, async (req, res) => {
+      try {
+        const { bookId } = req.body;
+
+        // Check duplicate
+        const existing = await wishlistCollection.findOne({
+          userEmail: req.tokenEmail,
+          bookId,
+        });
+
+        if (existing) {
+          return res.send({ message: "Already in wishlist" });
+        }
+
+        const result = await wishlistCollection.insertOne({
+          userEmail: req.tokenEmail,
+          bookId,
+          addedAt: new Date(),
+        });
+
+        res.send({ success: true, result });
+      } catch (error) {
+        console.error("Add to wishlist error:", error);
+        res.status(500).send({ message: "Failed to add to wishlist" });
+      }
+    });
+
+    // Get My Wishlist
+    app.get("/my-wishlist", verifyJWT, async (req, res) => {
+      try {
+        const wishlist = await wishlistCollection
+          .find({ userEmail: req.tokenEmail })
+          .toArray();
+
+        // Populate book details
+        const bookIds = wishlist.map((item) => new ObjectId(item.bookId));
+        const books = await booksCollection
+          .find({ _id: { $in: bookIds } })
+          .toArray();
+
+        res.send({ success: true, books });
+      } catch (error) {
+        console.error("Get wishlist error:", error);
+        res.status(500).send({ message: "Failed to fetch wishlist" });
+      }
+    });
+
+    // Remove from Wishlist
+    app.delete("/wishlist/:bookId", verifyJWT, async (req, res) => {
+      try {
+        const bookId = req.params.bookId;
+
+        const result = await wishlistCollection.deleteOne({
+          userEmail: req.tokenEmail,
+          bookId,
+        });
+
+        res.send({ success: true, result });
+      } catch (error) {
+        console.error("Remove wishlist error:", error);
+        res.status(500).send({ message: "Failed to remove from wishlist" });
       }
     });
 
