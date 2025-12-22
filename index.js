@@ -6,9 +6,6 @@ const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const admin = require("firebase-admin");
 const serviceAccount = require("./serviceAccountKey.json");
 const port = process.env.PORT || 3000;
-// const decoded = Buffer.from(process.env.FB_SERVICE_KEY, "base64").toString(
-//   "utf-8"
-// );
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -75,7 +72,7 @@ async function run() {
     const verifyLibrarian = async (req, res, next) => {
       const email = req.tokenEmail;
       const user = await usersCollection.findOne({ email });
-      console.log("Role in middleware:", user?.role); // <-- debug
+      // console.log("Role in middleware:", user?.role); // <-- debug
       if (user?.role !== "librarian" && user?.role !== "admin") {
         return res.status(403).send({ message: "Forbidden Access!" });
       }
@@ -105,7 +102,7 @@ async function run() {
     });
 
     // Get User Role
-    app.get("/users/:email/role", async (req, res) => {
+    app.get("/users/:email/role", verifyJWT, async (req, res) => {
       const email = req.params.email;
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
@@ -115,7 +112,7 @@ async function run() {
     });
 
     // Update User Profile
-    app.patch("/users/:email", async (req, res) => {
+    app.patch("/users/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
@@ -177,7 +174,7 @@ async function run() {
     });
 
     // Add Book (Librarian Only)
-    app.post("/books", verifyJWT, async (req, res) => {
+    app.post("/books", verifyJWT, verifyLibrarian, async (req, res) => {
       const book = req.body;
       const result = await booksCollection.insertOne({
         ...book,
@@ -189,8 +186,8 @@ async function run() {
     });
 
     // Get My Books (Librarian)
-    app.get("/my-books", verifyJWT, async (req, res) => {
-      console.log("Token email in route:", req.tokenEmail); // <-- debug
+    app.get("/my-books", verifyJWT, verifyLibrarian, async (req, res) => {
+      // console.log("Token email in route:", req.tokenEmail);
       const books = await booksCollection
         .find({ addedBy: req.tokenEmail })
         .toArray();
@@ -198,7 +195,7 @@ async function run() {
     });
 
     // Update Book (Librarian)
-    app.patch("/books/:id", verifyJWT, async (req, res) => {
+    app.patch("/books/:id", verifyJWT, verifyLibrarian, async (req, res) => {
       const id = req.params.id;
 
       const book = await booksCollection.findOne({ _id: new ObjectId(id) });
@@ -327,34 +324,6 @@ async function run() {
     });
 
     // Get Librarian Orders
-    app.get("/librarian-orders", verifyJWT, async (req, res) => {
-      const orders = await ordersCollection
-        .find({ librarianEmail: req.tokenEmail })
-        .sort({ orderDate: -1 })
-        .toArray();
-      res.send(orders);
-    });
-
-    // Update Order Status (Librarian)
-    app.patch("/orders/:id/status", verifyJWT, async (req, res) => {
-      const id = req.params.id;
-      const { orderStatus } = req.body;
-      const order = await ordersCollection.findOne({ _id: new ObjectId(id) });
-
-      if (order.librarianEmail !== req.tokenEmail) {
-        return res
-          .status(403)
-          .send({ message: "You can only manage your own book orders!" });
-      }
-
-      const result = await ordersCollection.updateOne(
-        { _id: new ObjectId(id) },
-        { $set: { orderStatus } }
-      );
-      res.send(result);
-    });
-
-    // Get Librarian Orders
     app.get(
       "/librarian-orders",
       verifyJWT,
@@ -448,7 +417,7 @@ async function run() {
     // ==========================================
     // PAYMENT ROUTES
     // ==========================================
-    app.post("/create-checkout-session", async (req, res) => {
+    app.post("/create-checkout-session", verifyJWT, async (req, res) => {
       const order = req.body;
 
       const session = await stripe.checkout.sessions.create({
@@ -483,7 +452,7 @@ async function run() {
       res.send({ url: session.url });
     });
 
-    app.post("/verify-payment", async (req, res) => {
+    app.post("/verify-payment", verifyJWT, async (req, res) => {
       try {
         const { sessionId } = req.body;
 
@@ -573,13 +542,13 @@ async function run() {
     // ============================================
 
     // Get All Users
-    app.get("/users", verifyJWT, async (req, res) => {
+    app.get("/users", verifyJWT, verifyAdmin, async (req, res) => {
       const users = await usersCollection.find().toArray();
       res.send(users);
     });
 
     // Update User Role (Make Librarian/Admin)
-    app.patch("/users/:id/role", verifyJWT, async (req, res) => {
+    app.patch("/users/:id/role", verifyJWT, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       const { role } = req.body;
       const result = await usersCollection.updateOne(
