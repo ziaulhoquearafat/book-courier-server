@@ -396,9 +396,7 @@ async function run() {
       try {
         const { sessionId } = req.body;
 
-        // 1️⃣ Stripe session retrieve
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-        console.log(session);
 
         if (session.payment_status !== "paid") {
           return res.status(400).send({ message: "Payment not completed" });
@@ -407,26 +405,30 @@ async function run() {
         const orderId = session.metadata.orderId;
         const transactionId = session.payment_intent;
 
-        // 2️⃣ 🔥 DUPLICATE PAYMENT CHECK
+        // 🔥 order থেকে userEmail আনো
+        const order = await ordersCollection.findOne({
+          _id: new ObjectId(orderId),
+        });
+
+        if (!order) {
+          return res.status(404).send({ message: "Order not found" });
+        }
+
+        // 🔥 duplicate payment prevent
         const existingPayment = await paymentsCollection.findOne({
           transactionId,
         });
 
         if (existingPayment) {
-          return res.send({
-            message: "Payment already verified",
-            transactionId,
-          });
+          return res.send({ message: "Payment already verified" });
         }
 
-        // 3️⃣ Save payment info
         const paymentDoc = {
           orderId,
           transactionId,
           amount: session.amount_total / 100,
           currency: session.currency,
-          customerEmail:
-            session.customer_details?.email || session.customer_email,
+          customerEmail: order.userEmail, // ✅ FIXED
           paymentMethod: session.payment_method_types[0],
           paymentStatus: "paid",
           createdAt: new Date(),
@@ -434,7 +436,6 @@ async function run() {
 
         await paymentsCollection.insertOne(paymentDoc);
 
-        // 4️⃣ Update order
         await ordersCollection.updateOne(
           { _id: new ObjectId(orderId) },
           {
@@ -447,13 +448,32 @@ async function run() {
           }
         );
 
-        res.send({
-          success: true,
-          transactionId,
-        });
+        res.send({ success: true });
       } catch (error) {
         console.error("Payment verify error:", error);
         res.status(500).send({ message: "Payment verification failed" });
+      }
+    });
+
+    // Get My Payments (User)
+
+    app.get("/my-payments", verifyJWT, async (req, res) => {
+      try {
+        const email = req.tokenEmail;
+
+        if (!email) {
+          return res.status(401).send({ message: "Unauthorized access" });
+        }
+
+        const payments = await paymentsCollection
+          .find({ customerEmail: email }) // 🔥 CORRECT FIELD
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(payments);
+      } catch (error) {
+        console.error("Get my payments error:", error);
+        res.status(500).send({ message: "Failed to get payments" });
       }
     });
 
