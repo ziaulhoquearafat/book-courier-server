@@ -26,12 +26,12 @@ app.use(express.json());
 const verifyJWT = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    if (!authHeader) {
-      return res.status(401).send({ message: "Unauthorized" });
-    }
+    if (!authHeader) return res.status(401).send({ message: "Unauthorized" });
 
-    const token = authHeader.split(" ")[1];
+    const token = authHeader.split(" ")[1]; // "Bearer <token>"
     const decoded = await admin.auth().verifyIdToken(token);
+
+    console.log("Decoded token:", decoded);
 
     req.tokenEmail = decoded.email;
     next();
@@ -72,10 +72,13 @@ async function run() {
     const verifyLibrarian = async (req, res, next) => {
       const email = req.tokenEmail;
       const user = await usersCollection.findOne({ email });
-      // console.log("Role in middleware:", user?.role); // <-- debug
-      if (user?.role !== "librarian" && user?.role !== "admin") {
+
+      // check librarian or admin
+      if (!user || (user.role !== "librarian" && user.role !== "admin")) {
         return res.status(403).send({ message: "Forbidden Access!" });
       }
+
+      req.userRole = user.role; // optional: route এ role দরকার হলে
       next();
     };
 
@@ -90,7 +93,7 @@ async function run() {
       const existingUser = await usersCollection.findOne(query);
 
       if (existingUser) {
-        return res.send({ message: "user already exists", insertedId: null });
+        return res.send({ message: "User already exists", insertedId: null });
       }
 
       const result = await usersCollection.insertOne({
@@ -98,15 +101,19 @@ async function run() {
         role: "user",
         createdAt: new Date(),
       });
+
       res.send(result);
     });
 
     // Get User Role
     app.get("/users/:email/role", verifyJWT, async (req, res) => {
       const email = req.params.email;
+
+      // Email mismatch check
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
       }
+
       const user = await usersCollection.findOne({ email });
       res.send({ role: user?.role || "user" });
     });
@@ -114,14 +121,18 @@ async function run() {
     // Update User Profile
     app.patch("/users/:email", verifyJWT, async (req, res) => {
       const email = req.params.email;
+
       if (email !== req.tokenEmail) {
         return res.status(403).send({ message: "Forbidden Access!" });
       }
+
       const { name, image } = req.body;
+
       const result = await usersCollection.updateOne(
         { email },
         { $set: { name, image, updatedAt: new Date() } }
       );
+
       res.send(result);
     });
 
@@ -149,12 +160,18 @@ async function run() {
 
     // Get Latest Books (for homepage)
     app.get("/books/latest", async (req, res) => {
-      const books = await booksCollection
-        .find({ status: "published" })
-        .sort({ createdAt: -1 })
-        .limit(8)
-        .toArray();
-      res.send(books);
+      try {
+        const books = await booksCollection
+          .find({ status: "published" })
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .toArray();
+
+        res.send(books);
+      } catch (error) {
+        console.error("Latest books error:", error);
+        res.status(500).send({ message: "Failed to fetch latest books" });
+      }
     });
 
     // Get Single Book Details
@@ -172,14 +189,22 @@ async function run() {
 
     // Add Book (Librarian Only)
     app.post("/books", verifyJWT, verifyLibrarian, async (req, res) => {
-      const book = req.body;
-      const result = await booksCollection.insertOne({
-        ...book,
-        addedBy: req.tokenEmail,
-        createdAt: new Date(),
-        ratings: [],
-      });
-      res.send(result);
+      try {
+        const book = req.body;
+
+        const result = await booksCollection.insertOne({
+          ...book,
+          addedBy: req.tokenEmail,
+          status: "unpublished", // 🔥 MUST
+          ratings: [],
+          createdAt: new Date(),
+        });
+
+        res.send(result);
+      } catch (error) {
+        console.error("Add book error:", error);
+        res.status(500).send({ message: "Failed to add book" });
+      }
     });
 
     // Get My Books (Librarian)
@@ -235,25 +260,29 @@ async function run() {
 
     // Publish / Unpublish Book (Admin)
     app.patch("/books/:id/status", verifyJWT, verifyAdmin, async (req, res) => {
-      const id = req.params.id;
-      const { isPublished } = req.body;
+      try {
+        const id = req.params.id;
+        const { isPublished } = req.body;
 
-      // ✅ Validation (must be boolean)
-      if (typeof isPublished !== "boolean") {
-        return res.status(400).send({ message: "Invalid status value" });
-      }
-
-      const result = await booksCollection.updateOne(
-        { _id: new ObjectId(id) },
-        {
-          $set: {
-            isPublished: isPublished,
-            updatedAt: new Date(),
-          },
+        if (typeof isPublished !== "boolean") {
+          return res.status(400).send({ message: "Invalid status value" });
         }
-      );
 
-      res.send(result);
+        const result = await booksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              status: isPublished ? "published" : "unpublished",
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        res.send(result);
+      } catch (error) {
+        console.error("Publish book error:", error);
+        res.status(500).send({ message: "Failed to update book status" });
+      }
     });
 
     // Delete Book (Admin)
@@ -293,11 +322,17 @@ async function run() {
 
     // Get My Orders (User)
     app.get("/my-orders", verifyJWT, async (req, res) => {
-      const orders = await ordersCollection
-        .find({ userEmail: req.tokenEmail })
-        .sort({ orderDate: -1 })
-        .toArray();
-      res.send(orders);
+      try {
+        const orders = await ordersCollection
+          .find({ userEmail: req.tokenEmail })
+          .sort({ orderDate: -1 })
+          .toArray();
+
+        res.send(orders);
+      } catch (error) {
+        console.error("Get my orders error:", error);
+        res.status(500).send({ message: "Failed to get orders" });
+      }
     });
 
     // Cancel Order (User)
@@ -498,7 +533,7 @@ async function run() {
           {
             $set: {
               paymentStatus: "paid",
-              orderStatus: "completed",
+              orderStatus: "delivered",
               transactionId,
               paidAt: new Date(),
             },
@@ -571,9 +606,9 @@ async function run() {
             .send({ message: "Rating must be between 1 and 5" });
         }
 
-        // 1️⃣ Check if user ordered & delivered this book
+        // Check if user has delivered order
         const order = await ordersCollection.findOne({
-          bookId: bookId,
+          bookId: bookId.toString(),
           userEmail: req.tokenEmail,
           orderStatus: "delivered",
         });
@@ -581,10 +616,12 @@ async function run() {
         if (!order) {
           return res
             .status(403)
-            .send({ message: "You can only review books you ordered!" });
+            .send({
+              message: "You can only review books you ordered and delivered!",
+            });
         }
 
-        // 2️⃣ Prevent duplicate review (1 user = 1 review)
+        // Prevent duplicate review
         const alreadyReviewed = await booksCollection.findOne({
           _id: new ObjectId(bookId),
           "ratings.userEmail": req.tokenEmail,
@@ -596,7 +633,7 @@ async function run() {
             .send({ message: "You already reviewed this book" });
         }
 
-        // 3️⃣ Push review
+        // Add review
         const result = await booksCollection.updateOne(
           { _id: new ObjectId(bookId) },
           {
